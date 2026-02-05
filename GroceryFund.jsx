@@ -1,0 +1,1040 @@
+import React, { useState, useEffect } from 'react';
+
+// ===========================================
+// 🖼️ IMAGE CONFIGURATION
+// ===========================================
+// 1. Place your images in /public/images/
+// 2. Update paths below if needed
+// 3. Set USE_CUSTOM_IMAGES = true
+//
+// Recommended: Use a "couples" themed icon 
+// (e.g., two milk cartons, heart on grocery bag)
+// ===========================================
+const IMAGES = {
+  milk: '/images/milk-icon.png',        // Main app icon (header, setup, summary)
+  groceryBag: '/images/grocery-bag.png', // Empty state icon
+  lettuce: '/images/lettuce.png',        // Optional: decorative
+  fridge: '/images/fridge.png',          // Optional: decorative
+};
+
+// Flip this to true once your images are in /public/images/
+const USE_CUSTOM_IMAGES = false;
+
+// ===========================================
+// COMPONENT
+// ===========================================
+const GroceryFund = () => {
+  const [purchases, setPurchases] = useState([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [isFirstTime, setIsFirstTime] = useState(true);
+  const [selectedStore, setSelectedStore] = useState(null);
+  const [customStore, setCustomStore] = useState('');
+  const [amount, setAmount] = useState('');
+  const [paidBy, setPaidBy] = useState('me');
+  const [names, setNames] = useState({ me: '', partner: '' });
+  const [householdName, setHouseholdName] = useState('');
+  const [tempNames, setTempNames] = useState({ me: '', partner: '' });
+  const [tempHousehold, setTempHousehold] = useState('');
+  const [viewMode, setViewMode] = useState('week');
+  const [loading, setLoading] = useState(true);
+
+  const presetStores = [
+    { id: 'whole-foods', name: 'Whole Foods', emoji: '🥬' },
+    { id: 'mr-mango', name: 'Mr Mango', emoji: '🥭' },
+    { id: 'trader-joes', name: "Trader Joe's", emoji: '🛒' },
+    { id: 'other', name: 'Other', emoji: '✏️' },
+  ];
+
+  const getCurrentMonth = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const getMonthName = (monthKey) => {
+    const [year, month] = monthKey.split('-');
+    const date = new Date(year, parseInt(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const getWeekStart = () => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(now.setDate(diff)).toISOString().split('T')[0];
+  };
+
+  // Storage helpers - works with both localStorage (production) and window.storage (Claude artifacts)
+  const storage = {
+    async get(key) {
+      try {
+        if (window.storage) {
+          const result = await window.storage.get(key, true);
+          return result?.value ? JSON.parse(result.value) : null;
+        } else {
+          const item = localStorage.getItem(key);
+          return item ? JSON.parse(item) : null;
+        }
+      } catch (e) {
+        return null;
+      }
+    },
+    async set(key, value) {
+      try {
+        if (window.storage) {
+          await window.storage.set(key, JSON.stringify(value), true);
+        } else {
+          localStorage.setItem(key, JSON.stringify(value));
+        }
+      } catch (e) {
+        console.error('Storage error:', e);
+      }
+    },
+    async delete(key) {
+      try {
+        if (window.storage) {
+          await window.storage.delete(key, true);
+        } else {
+          localStorage.removeItem(key);
+        }
+      } catch (e) {
+        console.error('Storage error:', e);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const loadData = async () => {
+      let hasNames = false;
+      
+      const purchasesData = await storage.get('grocery-fund-purchases');
+      if (purchasesData) setPurchases(purchasesData);
+      
+      const namesData = await storage.get('grocery-fund-names');
+      if (namesData) {
+        setNames(namesData);
+        setTempNames(namesData);
+        hasNames = namesData.me && namesData.partner;
+      }
+      
+      const householdData = await storage.get('grocery-fund-household');
+      if (householdData) {
+        setHouseholdName(householdData);
+        setTempHousehold(householdData);
+      }
+      
+      setIsFirstTime(!hasNames);
+      setLoading(false);
+    };
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (purchases.length > 0) storage.set('grocery-fund-purchases', purchases);
+  }, [purchases]);
+
+  useEffect(() => {
+    if (names.me && names.partner) storage.set('grocery-fund-names', names);
+  }, [names]);
+
+  useEffect(() => {
+    if (householdName) storage.set('grocery-fund-household', householdName);
+  }, [householdName]);
+
+  const currentMonth = getCurrentMonth();
+  const weekStart = getWeekStart();
+  const monthPurchases = purchases.filter(p => p.month === currentMonth);
+  const weekPurchases = monthPurchases.filter(p => p.date >= weekStart);
+  const displayPurchases = viewMode === 'week' ? weekPurchases : monthPurchases;
+
+  const addPurchase = () => {
+    const storeName = selectedStore === 'other' ? customStore : presetStores.find(s => s.id === selectedStore)?.name;
+    if (!storeName || !amount) return;
+    const purchase = {
+      id: Date.now(),
+      store: storeName,
+      amount: parseFloat(amount),
+      paidBy,
+      date: new Date().toISOString().split('T')[0],
+      month: currentMonth
+    };
+    setPurchases([purchase, ...purchases]);
+    setSelectedStore(null);
+    setCustomStore('');
+    setAmount('');
+    setPaidBy('me');
+    setShowAddForm(false);
+  };
+
+  const deletePurchase = (id) => {
+    const updated = purchases.filter(p => p.id !== id);
+    setPurchases(updated);
+    if (updated.length === 0) storage.delete('grocery-fund-purchases');
+  };
+
+  const startEditingSettings = () => {
+    setTempNames({ ...names });
+    setTempHousehold(householdName);
+    setShowSettings(true);
+  };
+
+  const saveSettings = () => {
+    if (tempNames.me && tempNames.partner) {
+      setNames(tempNames);
+      setHouseholdName(tempHousehold);
+      setShowSettings(false);
+      setIsFirstTime(false);
+    }
+  };
+
+  const myTotal = monthPurchases.filter(p => p.paidBy === 'me').reduce((sum, p) => sum + p.amount, 0);
+  const partnerTotal = monthPurchases.filter(p => p.paidBy === 'partner').reduce((sum, p) => sum + p.amount, 0);
+  const grandTotal = myTotal + partnerTotal;
+  const fairShare = grandTotal / 2;
+  const myBalance = myTotal - fairShare;
+
+  const formatDate = (dateStr) => {
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  // Icon component - uses custom images or falls back to emoji
+  const AppIcon = ({ size = 70, type = 'milk' }) => {
+    const emojiFallback = {
+      milk: '🥛',
+      groceryBag: '🛒',
+      lettuce: '🥬',
+      fridge: '🧊'
+    };
+
+    if (USE_CUSTOM_IMAGES) {
+      return (
+        <img 
+          src={IMAGES[type]} 
+          alt="" 
+          style={{ 
+            width: size, 
+            height: size, 
+            objectFit: 'contain' 
+          }} 
+        />
+      );
+    }
+    
+    return <div style={{ fontSize: size * 0.85 }}>{emojiFallback[type]}</div>;
+  };
+
+  const inputStyle = {
+    width: '100%',
+    padding: '14px 16px',
+    border: '2px solid #e8ddd4',
+    borderRadius: '12px',
+    fontSize: '16px',
+    boxSizing: 'border-box',
+    background: 'white',
+    outline: 'none'
+  };
+
+  const renderSettingsForm = (isSetup) => (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: isSetup ? 'linear-gradient(135deg, #fef9f3 0%, #fdf2e9 50%, #fce8d9 100%)' : 'rgba(45, 42, 38, 0.6)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px',
+      zIndex: 100
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '24px',
+        padding: '32px',
+        maxWidth: '340px',
+        width: '100%',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.15)'
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <AppIcon size={isSetup ? 100 : 60} type="milk" />
+          <h2 style={{
+            fontFamily: "'Fraunces', Georgia, serif",
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#2d2a26',
+            margin: 0,
+            marginTop: '8px',
+            marginBottom: '4px'
+          }}>
+            {isSetup ? 'Grocery Fund' : 'Settings'}
+          </h2>
+          {isSetup && (
+            <>
+              <p style={{ color: '#8b7355', fontSize: '13px', margin: '0 0 8px 0' }}>
+                for couples
+              </p>
+              <p style={{ color: '#a99880', fontSize: '14px', margin: 0, fontStyle: 'italic' }}>
+                one less thing to think about together
+              </p>
+            </>
+          )}
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ fontSize: '13px', color: '#8b7355', fontWeight: 500, display: 'block', marginBottom: '8px' }}>
+            Your name
+          </label>
+          <input
+            type="text"
+            value={tempNames.me}
+            onChange={(e) => {
+              const val = e.target.value;
+              setTempNames(prev => ({ ...prev, me: val }));
+            }}
+            placeholder="e.g. Richie"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ fontSize: '13px', color: '#8b7355', fontWeight: 500, display: 'block', marginBottom: '8px' }}>
+            Partner's name
+          </label>
+          <input
+            type="text"
+            value={tempNames.partner}
+            onChange={(e) => {
+              const val = e.target.value;
+              setTempNames(prev => ({ ...prev, partner: val }));
+            }}
+            placeholder="e.g. Otter"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ marginBottom: '24px' }}>
+          <label style={{ fontSize: '13px', color: '#8b7355', fontWeight: 500, display: 'block', marginBottom: '8px' }}>
+            Household name <span style={{ opacity: 0.6 }}>(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={tempHousehold}
+            onChange={(e) => setTempHousehold(e.target.value)}
+            placeholder="e.g. a couple of dawgs"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {!isSetup && (
+            <button
+              onClick={() => setShowSettings(false)}
+              style={{
+                flex: 1,
+                padding: '14px',
+                background: '#f5f0eb',
+                color: '#5d4e3c',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            onClick={saveSettings}
+            disabled={!tempNames.me || !tempNames.partner}
+            style={{
+              flex: 1,
+              padding: '14px',
+              background: (!tempNames.me || !tempNames.partner) ? '#e8ddd4' : 'linear-gradient(135deg, #5d8a66, #4a7854)',
+              color: (!tempNames.me || !tempNames.partner) ? '#a99880' : 'white',
+              border: 'none',
+              borderRadius: '12px',
+              fontSize: '15px',
+              fontWeight: 600,
+              cursor: (!tempNames.me || !tempNames.partner) ? 'not-allowed' : 'pointer',
+              boxShadow: (!tempNames.me || !tempNames.partner) ? 'none' : '0 4px 12px rgba(93, 138, 102, 0.3)'
+            }}
+          >
+            {isSetup ? "Let's go!" : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #fef9f3 0%, #fdf2e9 50%, #fce8d9 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <AppIcon size={80} type="milk" />
+      </div>
+    );
+  }
+
+  if (isFirstTime) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #fef9f3 0%, #fdf2e9 50%, #fce8d9 100%)',
+        fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+      }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:wght@600;700&display=swap');
+        `}</style>
+        {renderSettingsForm(true)}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #fef9f3 0%, #fdf2e9 50%, #fce8d9 100%)',
+      fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+      padding: '20px',
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:wght@600;700&display=swap');
+      `}</style>
+      
+      {showSettings && renderSettingsForm(false)}
+      
+      {/* Screenshot-friendly Summary Modal */}
+      {showSummary && (
+        <div 
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(45, 42, 38, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            zIndex: 100
+          }}
+          onClick={() => setShowSummary(false)}
+        >
+          <div 
+            style={{
+              background: 'linear-gradient(145deg, #fffdf9 0%, #fef9f3 100%)',
+              borderRadius: '28px',
+              padding: '32px',
+              maxWidth: '320px',
+              width: '100%',
+              boxShadow: '0 25px 80px rgba(0,0,0,0.25)',
+              border: '1px solid rgba(255,255,255,0.8)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+              <AppIcon size={70} type="milk" />
+              <h2 style={{
+                fontFamily: "'Fraunces', Georgia, serif",
+                fontSize: '20px',
+                fontWeight: 700,
+                color: '#2d2a26',
+                margin: '12px 0 2px 0'
+              }}>
+                Grocery Fund
+              </h2>
+              <div style={{ fontSize: '12px', color: '#8b7355', marginBottom: '4px' }}>
+                for couples
+              </div>
+              {householdName && (
+                <div style={{ fontSize: '14px', color: '#8b7355' }}>
+                  {householdName}
+                </div>
+              )}
+            </div>
+
+            {/* Month & Total */}
+            <div style={{
+              background: 'white',
+              borderRadius: '16px',
+              padding: '20px',
+              marginBottom: '16px',
+              boxShadow: '0 2px 12px rgba(139, 115, 85, 0.08)'
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <div style={{ fontSize: '13px', color: '#8b7355', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  {getMonthName(currentMonth)}
+                </div>
+                <div style={{ fontSize: '42px', fontWeight: 700, color: '#2d2a26', fontFamily: "'Fraunces', serif" }}>
+                  ${grandTotal.toFixed(2)}
+                </div>
+                <div style={{ fontSize: '13px', color: '#8b7355' }}>
+                  spent together
+                </div>
+              </div>
+
+              {/* Individual totals */}
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                padding: '12px 0',
+                borderTop: '1px solid #f0e6dc'
+              }}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={{ fontSize: '13px', color: '#8b7355', marginBottom: '4px' }}>{names.me}</div>
+                  <div style={{ fontSize: '20px', fontWeight: 600, color: '#5d8a66' }}>${myTotal.toFixed(2)}</div>
+                </div>
+                <div style={{ width: '1px', background: '#f0e6dc' }} />
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={{ fontSize: '13px', color: '#8b7355', marginBottom: '4px' }}>{names.partner}</div>
+                  <div style={{ fontSize: '20px', fontWeight: 600, color: '#d4896a' }}>${partnerTotal.toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Balance indicator */}
+            {grandTotal > 0 && (
+              <div style={{
+                background: Math.abs(myBalance) < 0.50 ? '#f0f7f1' : 'white',
+                borderRadius: '12px',
+                padding: '16px',
+                textAlign: 'center',
+                marginBottom: '20px',
+                border: Math.abs(myBalance) < 0.50 ? '1px solid #c8e6c9' : '1px solid #f0e6dc'
+              }}>
+                {Math.abs(myBalance) < 0.50 ? (
+                  <div style={{ fontSize: '16px', color: '#5d8a66', fontWeight: 600 }}>
+                    ✨ All square! ✨
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: '12px', color: '#8b7355', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      To even out
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 600, color: '#5d8a66' }}>
+                      {myBalance > 0 
+                        ? `${names.partner} → ${names.me}`
+                        : `${names.me} → ${names.partner}`
+                      }
+                    </div>
+                    <div style={{ fontSize: '28px', fontWeight: 700, color: '#2d2a26', fontFamily: "'Fraunces', serif" }}>
+                      ${Math.abs(myBalance).toFixed(2)}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Screenshot hint */}
+            <div style={{ 
+              textAlign: 'center', 
+              fontSize: '12px', 
+              color: '#a99880',
+              marginBottom: '12px'
+            }}>
+              📸 or tap below to copy
+            </div>
+
+            {/* Share button */}
+            <button
+              onClick={() => {
+                const summary = `🥛 Grocery Fund${householdName ? ` — ${householdName}` : ''}
+
+${getMonthName(currentMonth)}
+Total: $${grandTotal.toFixed(2)}
+
+${names.me}: $${myTotal.toFixed(2)}
+${names.partner}: $${partnerTotal.toFixed(2)}
+${Math.abs(myBalance) < 0.50 
+  ? `\n✨ All square!` 
+  : `\nTo even out: ${myBalance > 0 ? names.partner : names.me} → ${myBalance > 0 ? names.me : names.partner}: $${Math.abs(myBalance).toFixed(2)}`
+}`;
+                navigator.clipboard.writeText(summary);
+                alert('Copied to clipboard!');
+              }}
+              style={{
+                width: '100%',
+                padding: '14px',
+                background: 'linear-gradient(135deg, #5d8a66, #4a7854)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                marginBottom: '10px',
+                boxShadow: '0 4px 12px rgba(93, 138, 102, 0.3)'
+              }}
+            >
+              📋 Copy Summary
+            </button>
+
+            {/* Close button */}
+            <button
+              onClick={() => setShowSummary(false)}
+              style={{
+                width: '100%',
+                padding: '14px',
+                background: '#f5f0eb',
+                color: '#5d4e3c',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+      
+      <div style={{ maxWidth: '420px', margin: '0 auto' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '32px', paddingTop: '20px' }}>
+          <AppIcon size={80} type="milk" />
+          <h1 style={{
+            fontFamily: "'Fraunces', Georgia, serif",
+            fontSize: '24px',
+            fontWeight: 700,
+            color: '#2d2a26',
+            margin: '8px 0 0 0',
+            letterSpacing: '-0.5px'
+          }}>
+            Grocery Fund
+          </h1>
+          <p style={{ 
+            color: '#8b7355', 
+            fontSize: '13px', 
+            margin: '4px 0 0 0' 
+          }}>
+            for couples
+          </p>
+          <p 
+            onClick={startEditingSettings}
+            style={{
+              color: '#8b7355',
+              marginTop: '8px',
+              fontSize: '15px',
+              cursor: 'pointer',
+            }}
+          >
+            {householdName ? `${householdName} · ` : ''}{names.me} & {names.partner} <span style={{ fontSize: '12px', opacity: 0.6 }}>✎</span>
+          </p>
+        </div>
+
+        {/* Stats Card */}
+        <div style={{
+          background: 'white',
+          borderRadius: '20px',
+          padding: '24px',
+          marginBottom: '20px',
+          boxShadow: '0 4px 20px rgba(139, 115, 85, 0.08)',
+          border: '1px solid rgba(139, 115, 85, 0.1)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+            <div>
+              <div style={{ fontSize: '13px', color: '#8b7355', marginBottom: '4px' }}>
+                {getMonthName(currentMonth)}
+              </div>
+              <div style={{ fontSize: '32px', fontWeight: 600, color: '#2d2a26' }}>
+                ${grandTotal.toFixed(2)}
+              </div>
+              <div style={{ fontSize: '13px', color: '#8b7355', marginTop: '2px' }}>
+                spent together
+              </div>
+            </div>
+            <button
+              onClick={() => setShowSummary(true)}
+              style={{
+                width: '44px',
+                height: '44px',
+                background: '#f5f0eb',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <span style={{ fontSize: '20px' }}>📤</span>
+            </button>
+          </div>
+
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#8b7355', marginBottom: '8px' }}>
+              <span>{names.me}: ${myTotal.toFixed(2)}</span>
+              <span>{names.partner}: ${partnerTotal.toFixed(2)}</span>
+            </div>
+            
+            <div style={{
+              height: '12px',
+              background: '#f0e6dc',
+              borderRadius: '6px',
+              overflow: 'hidden',
+              display: 'flex'
+            }}>
+              <div style={{
+                height: '100%',
+                width: grandTotal > 0 ? `${(myTotal / grandTotal) * 100}%` : '50%',
+                background: 'linear-gradient(90deg, #5d8a66, #7ba686)',
+                transition: 'width 0.3s ease'
+              }} />
+              <div style={{
+                height: '100%',
+                width: grandTotal > 0 ? `${(partnerTotal / grandTotal) * 100}%` : '50%',
+                background: 'linear-gradient(90deg, #e8a87c, #d4896a)',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+            
+            <div style={{ 
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '16px',
+              marginTop: '10px',
+              fontSize: '12px',
+              color: '#8b7355'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#5d8a66' }} />
+                <span>{names.me}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#d4896a' }} />
+                <span>{names.partner}</span>
+              </div>
+            </div>
+            
+            <div style={{ 
+              textAlign: 'center', 
+              fontSize: '13px', 
+              color: '#8b7355', 
+              marginTop: '12px' 
+            }}>
+              {grandTotal > 0 && Math.abs(myBalance) > 0.50 ? (
+                myBalance > 0 
+                  ? `${names.me} is $${myBalance.toFixed(2)} ahead`
+                  : `${names.partner} is $${Math.abs(myBalance).toFixed(2)} ahead`
+              ) : grandTotal > 0 ? (
+                "You're even! ✨"
+              ) : (
+                "Start adding purchases"
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Add Button */}
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          style={{
+            width: '100%',
+            padding: '16px',
+            marginBottom: '20px',
+            background: showAddForm ? '#e8ddd4' : 'linear-gradient(135deg, #5d8a66, #4a7854)',
+            color: showAddForm ? '#5d4e3c' : 'white',
+            border: 'none',
+            borderRadius: '14px',
+            fontSize: '15px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: showAddForm ? 'none' : '0 4px 12px rgba(93, 138, 102, 0.3)'
+          }}
+        >
+          {showAddForm ? 'Cancel' : '+ Add Purchase'}
+        </button>
+
+        {/* Add Form */}
+        {showAddForm && (
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '20px',
+            marginBottom: '20px',
+            boxShadow: '0 4px 20px rgba(139, 115, 85, 0.08)',
+            border: '1px solid rgba(139, 115, 85, 0.1)'
+          }}>
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '13px', color: '#8b7355', marginBottom: '10px', fontWeight: 500 }}>Store</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                {presetStores.map(store => (
+                  <button
+                    key={store.id}
+                    onClick={() => {
+                      setSelectedStore(store.id);
+                      if (store.id !== 'other') setCustomStore('');
+                    }}
+                    style={{
+                      padding: '14px 12px',
+                      background: selectedStore === store.id ? '#5d8a66' : '#f5f0eb',
+                      color: selectedStore === store.id ? 'white' : '#5d4e3c',
+                      border: 'none',
+                      borderRadius: '12px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <span>{store.emoji}</span>
+                    <span>{store.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {selectedStore === 'other' && (
+              <input
+                type="text"
+                placeholder="Store name"
+                value={customStore}
+                onChange={(e) => setCustomStore(e.target.value)}
+                style={{ ...inputStyle, marginBottom: '12px' }}
+              />
+            )}
+            
+            <input
+              type="number"
+              placeholder="Amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              style={{ ...inputStyle, marginBottom: '12px' }}
+            />
+            
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+              <button
+                onClick={() => setPaidBy('me')}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  background: paidBy === 'me' ? '#5d8a66' : '#f5f0eb',
+                  color: paidBy === 'me' ? 'white' : '#5d4e3c',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
+                I paid
+              </button>
+              <button
+                onClick={() => setPaidBy('partner')}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  background: paidBy === 'partner' ? '#5d8a66' : '#f5f0eb',
+                  color: paidBy === 'partner' ? 'white' : '#5d4e3c',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
+                {names.partner} paid
+              </button>
+            </div>
+            
+            <button
+              onClick={addPurchase}
+              disabled={!selectedStore || (selectedStore === 'other' && !customStore) || !amount}
+              style={{
+                width: '100%',
+                padding: '14px',
+                background: (!selectedStore || (selectedStore === 'other' && !customStore) || !amount) 
+                  ? '#e8ddd4' 
+                  : 'linear-gradient(135deg, #5d8a66, #4a7854)',
+                color: (!selectedStore || (selectedStore === 'other' && !customStore) || !amount) 
+                  ? '#a99880' 
+                  : 'white',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '16px',
+                fontWeight: 600,
+                cursor: (!selectedStore || (selectedStore === 'other' && !customStore) || !amount) 
+                  ? 'not-allowed' 
+                  : 'pointer'
+              }}
+            >
+              Add Purchase
+            </button>
+          </div>
+        )}
+
+        {/* Purchase History */}
+        {monthPurchases.length > 0 && (
+          <div>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '12px'
+            }}>
+              <h2 style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#8b7355',
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+                margin: 0
+              }}>
+                Recent Purchases
+              </h2>
+              
+              <div style={{
+                display: 'flex',
+                background: '#f5f0eb',
+                borderRadius: '8px',
+                padding: '3px'
+              }}>
+                <button
+                  onClick={() => setViewMode('week')}
+                  style={{
+                    padding: '6px 12px',
+                    background: viewMode === 'week' ? 'white' : 'transparent',
+                    color: viewMode === 'week' ? '#5d4e3c' : '#a99880',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    boxShadow: viewMode === 'week' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  This Week
+                </button>
+                <button
+                  onClick={() => setViewMode('month')}
+                  style={{
+                    padding: '6px 12px',
+                    background: viewMode === 'month' ? 'white' : 'transparent',
+                    color: viewMode === 'month' ? '#5d4e3c' : '#a99880',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    boxShadow: viewMode === 'month' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  This Month
+                </button>
+              </div>
+            </div>
+            
+            {displayPurchases.length > 0 ? (
+              displayPurchases.map((purchase) => (
+                <div
+                  key={purchase.id}
+                  style={{
+                    background: 'white',
+                    borderRadius: '14px',
+                    padding: '16px',
+                    marginBottom: '10px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    boxShadow: '0 2px 8px rgba(139, 115, 85, 0.06)',
+                    border: '1px solid rgba(139, 115, 85, 0.08)'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 500, color: '#2d2a26', marginBottom: '4px' }}>
+                      {purchase.store}
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#8b7355' }}>
+                      {formatDate(purchase.date)} · {purchase.paidBy === 'me' ? names.me : names.partner}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ fontWeight: 600, color: '#2d2a26', fontSize: '17px' }}>
+                      ${purchase.amount.toFixed(2)}
+                    </div>
+                    <button
+                      onClick={() => deletePurchase(purchase.id)}
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        background: '#fef5f0',
+                        color: '#c17f59',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                padding: '24px',
+                color: '#a99880',
+                background: 'white',
+                borderRadius: '14px',
+                fontSize: '14px'
+              }}>
+                No purchases this week
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {monthPurchases.length === 0 && !showAddForm && (
+          <div style={{
+            textAlign: 'center',
+            padding: '40px 20px',
+            color: '#8b7355'
+          }}>
+            <AppIcon size={80} type="groceryBag" />
+            <p style={{ margin: '12px 0 0 0' }}>No purchases this month.<br />Add your first grocery run!</p>
+          </div>
+        )}
+        
+        {/* Footer */}
+        <div style={{
+          textAlign: 'center',
+          marginTop: '32px',
+          paddingBottom: '20px',
+          fontSize: '13px',
+          color: '#a99880'
+        }}>
+          Fair share: ${fairShare.toFixed(2)} each
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default GroceryFund;
